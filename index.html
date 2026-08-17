@@ -214,6 +214,15 @@
                     </nav>
                 </div>
                 <div class="flex items-center gap-4">
+                    <!-- NEW GLOBAL SESSION SELECTOR -->
+                    <div class="flex items-center gap-2 bg-white px-3 py-1.5 rounded-full border border-gray-200 shadow-sm hidden md:flex">
+                        <i class="fa-solid fa-calendar-days text-mattary text-xs"></i>
+                        <select id="global-session-select" onchange="window.changeContextSession(this.value)" class="text-xs font-bold text-gray-800 bg-transparent outline-none border-none cursor-pointer uppercase pr-2 appearance-none">
+                            <option value="">Memuatkan...</option>
+                        </select>
+                        <i class="fa-solid fa-chevron-down text-[10px] text-gray-400"></i>
+                    </div>
+
                     <div class="flex items-center gap-2 bg-emerald-50 px-3 py-1.5 rounded-full border border-emerald-100 hidden md:flex">
                         <i class="fa-solid fa-cloud text-emerald-600 text-xs"></i>
                         <span class="text-[10px] font-bold text-emerald-700 tracking-wide">LIVE SYNC</span>
@@ -330,6 +339,7 @@
             currentUser: null, 
             role: null, 
             userId: null, 
+            selectedSessionId: null,
             mobileSidebarOpen: false,
             currentPath: 'dashboard',
             isBulkImporting: false
@@ -444,9 +454,13 @@
                             syncCounter++;
                             if (syncCounter === collectionsToSync.length) {
                                 isSystemReady = true;
+                                if(window.DBHelpers.getActiveSession() && !window.AppState.selectedSessionId) {
+                                    window.AppState.selectedSessionId = window.DBHelpers.getActiveSession().id;
+                                }
                                 window.forceFinishLoading();
                             }
                         } else if (window.AppState.currentUser && !window.AppState.isBulkImporting) {
+                            if(window.AppState.selectedSessionId) window.renderContextSessionSelector();
                             window.renderContent(window.AppState.currentPath);
                         }
                     }, (error) => { console.error(`[Sync Error] ${colName}:`, error); });
@@ -486,9 +500,27 @@
         window.normalizeMyKid = (v) => (v == null ? "" : String(v).trim().replace(/\D/g, ""));
         window.normalizeMyKad = (v) => (v == null ? "" : String(v).trim().replace(/\D/g, ""));
 
+        window.renderContextSessionSelector = function() {
+            const selectEl = document.getElementById('global-session-select');
+            if (!selectEl) return;
+            const sessions = [...(window.LocalDB.sessions || [])].sort((a,b) => b.year - a.year);
+            selectEl.innerHTML = sessions.map(s => {
+                let label = s.name;
+                if (s.isActive) label += ' — AKTIF';
+                else if (s.isArchived) label += ' — ARKIB';
+                return `<option value="${s.id}" ${s.id === window.AppState.selectedSessionId ? 'selected' : ''}>${label}</option>`;
+            }).join('');
+        };
+
+        window.changeContextSession = function(sessionId) {
+            window.AppState.selectedSessionId = sessionId;
+            window.renderContent(window.AppState.currentPath);
+        };
+
         window.DBHelpers = {
             getActiveSession: () => (window.LocalDB.sessions || []).find(s => s.isActive),
             getSession: (id) => (window.LocalDB.sessions || []).find(s => s.id === id),
+            getContextSession: () => window.DBHelpers.getSession(window.AppState.selectedSessionId) || window.DBHelpers.getActiveSession(),
             getClass: (id) => (window.LocalDB.classes || []).find(c => c.id === id),
             
             formatClassName: function(cls) {
@@ -526,7 +558,7 @@
             getAssignedClassesForTeacher: (teacherId, sessionId) => {
                 const myAssg = (window.LocalDB.assignments || []).filter(a => a.teacherId === teacherId && (!sessionId || a.sessionId === sessionId));
                 const classIds = [...new Set(myAssg.map(a => a.classId))];
-                return window.DBHelpers.getSortedClasses((window.LocalDB.classes || []).filter(c => classIds.includes(c.id)));
+                return window.DBHelpers.getSortedClasses((window.LocalDB.classes || []).filter(c => classIds.includes(c.id) && (!sessionId || c.sessionId === sessionId || !c.sessionId)));
             },
             
             getAssignedSubjectsForClass: (teacherId, classId, sessionId) => {
@@ -537,14 +569,14 @@
                 return (window.LocalDB.subjects || []).filter(s => subjectIds.includes(s.id) && window.DBHelpers.isSubjectApplicableToYear(s, year)).sort((a,b) => a.name.localeCompare(b.name));
             },
             
-            getFormClassesForTeacher: (teacherId) => {
+            getFormClassesForTeacher: (teacherId, sessionId) => {
                 return window.DBHelpers.getSortedClasses(
-                    (window.LocalDB.classes || []).filter(c => (c.formTeacherId === teacherId || c.formTeacherAcaId === teacherId || c.formTeacherHafId === teacherId) && c.status !== false)
+                    (window.LocalDB.classes || []).filter(c => (c.formTeacherId === teacherId || c.formTeacherAcaId === teacherId || c.formTeacherHafId === teacherId) && c.status !== false && (!sessionId || c.sessionId === sessionId || !c.sessionId))
                 );
             },
             
-            isFormTeacher: (teacherId) => {
-                return window.DBHelpers.getFormClassesForTeacher(teacherId).length > 0;
+            isFormTeacher: (teacherId, sessionId) => {
+                return window.DBHelpers.getFormClassesForTeacher(teacherId, sessionId).length > 0;
             }
         };
 
@@ -736,6 +768,11 @@
             document.getElementById('login-container').classList.add('hidden');
             document.getElementById('app-container').classList.remove('hidden');
             
+            if (window.DBHelpers.getActiveSession() && !window.AppState.selectedSessionId) {
+                window.AppState.selectedSessionId = window.DBHelpers.getActiveSession().id;
+            }
+            window.renderContextSessionSelector();
+            
             document.getElementById('header-user-name').innerText = window.AppState.currentUser.name;
             document.getElementById('header-user-role').innerText = window.AppState.role;
             document.getElementById('sidebar-role-indicator').innerText = window.AppState.role === 'ADMIN' ? 'PENTADBIR SISTEM' : window.AppState.role === 'TEACHER' ? 'GURU / PENGAJAR' : 'IBU BAPA / PENJAGA';
@@ -769,7 +806,9 @@
                     <button onclick="window.renderContent('tetapan')" class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium hover:bg-red-500/20 text-red-200 hover:text-white transition-colors mt-2"><i class="fa-solid fa-gears w-5"></i> Tetapan Sistem</button>
                 `;
             } else if (role === 'TEACHER') {
-                const isFormTeacher = window.DBHelpers.isFormTeacher(window.AppState.userId);
+                const contextSession = window.DBHelpers.getContextSession();
+                const sessionId = contextSession ? contextSession.id : null;
+                const isFormTeacher = window.DBHelpers.isFormTeacher(window.AppState.userId, sessionId);
                 html = `
                     <button onclick="window.renderContent('dashboard')" class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium hover:bg-white/10 transition-colors"><i class="fa-solid fa-house w-5"></i> Utama Guru</button>
                     <button onclick="window.renderContent('teacher-mark-entry')" class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium hover:bg-white/10 transition-colors"><i class="fa-solid fa-pen-to-square w-5"></i> Kemasukan Markah</button>
@@ -787,6 +826,17 @@
             }
 
             nav.innerHTML = html;
+        };
+
+        window.renderNoSessionState = function() {
+            return `
+            <div class="max-w-7xl mx-auto space-y-6 animate-fade-in pb-20">
+                <div class="bg-white p-12 rounded-2xl shadow-sm text-center border border-red-100 mt-6 mx-4">
+                    <div class="w-20 h-20 bg-red-50 text-red-500 rounded-full flex items-center justify-center text-4xl mx-auto mb-4"><i class="fa-solid fa-calendar-xmark"></i></div>
+                    <h2 class="text-2xl font-bold text-gray-800 uppercase">Tiada Sesi Akademik Aktif</h2>
+                    <p class="text-gray-500 mt-2 font-medium">Tiada Sesi Akademik aktif. Sila aktifkan sesi terlebih dahulu di menu <strong>Sesi Akademik</strong>.</p>
+                </div>
+            </div>`;
         };
 
         window.renderContent = function(path) {
@@ -922,14 +972,14 @@
 
         // TETAPAN SISTEM
         window.renderUI_Tetapan = function() {
-            const settings = (window.LocalDB.systemSettings || []).find(s => s.id === 'global') || { allowMarkEntry: true, allowPBDEntry: true, publishResults: false };
+            const settings = (window.LocalDB.systemSettings || []).find(s => s.id === 'global') || { allowMarkEntry: true, allowPBDEntry: true };
 
             return `
             <div class="max-w-7xl mx-auto space-y-6 animate-fade-in pb-20">
                 <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                     <div>
                         <h2 class="text-2xl font-bold text-gray-800 uppercase">Tetapan Sistem Keseluruhan</h2>
-                        <p class="text-sm text-gray-500">Urus akses pengisian data guru, penerbitan slip dan tetapan kritikal sistem.</p>
+                        <p class="text-sm text-gray-500">Urus akses pengisian data guru dan tetapan kritikal sistem.</p>
                     </div>
                 </div>
 
@@ -938,8 +988,8 @@
                         <div class="flex items-center gap-3 pb-4 border-b">
                             <div class="w-10 h-10 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center text-lg"><i class="fa-solid fa-sliders"></i></div>
                             <div>
-                                <h3 class="font-bold text-gray-900 uppercase">Akses & Penerbitan</h3>
-                                <p class="text-xs text-gray-500">Kawal akses guru dan ibu bapa</p>
+                                <h3 class="font-bold text-gray-900 uppercase">Akses Kemasukan Data</h3>
+                                <p class="text-xs text-gray-500">Kawal kebenaran guru mengisi markah & PBD</p>
                             </div>
                         </div>
                         
@@ -963,17 +1013,6 @@
                                 <label class="relative inline-flex items-center cursor-pointer">
                                     <input type="checkbox" onchange="window.toggleSystemSetting('allowPBDEntry', this.checked)" class="sr-only peer" ${settings.allowPBDEntry !== false ? 'checked' : ''}>
                                     <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-500"></div>
-                                </label>
-                            </div>
-
-                            <div class="flex items-center justify-between p-4 border rounded-xl bg-gray-50 hover:border-purple-300 transition-colors">
-                                <div>
-                                    <p class="font-bold text-sm text-gray-900">Terbitkan Keputusan (Slip Ibu Bapa)</p>
-                                    <p class="text-xs text-gray-500 mt-1">Jika diaktifkan, ibu bapa boleh memuat turun dan melihat keputusan slip anak mereka.</p>
-                                </div>
-                                <label class="relative inline-flex items-center cursor-pointer">
-                                    <input type="checkbox" onchange="window.toggleSystemSetting('publishResults', this.checked)" class="sr-only peer" ${settings.publishResults === true ? 'checked' : ''}>
-                                    <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-mattary"></div>
                                 </label>
                             </div>
                         </div>
@@ -1074,13 +1113,43 @@
 
         // SESI AKADEMIK
         window.renderUI_Sesi = function() {
-            const sessions = window.LocalDB.sessions || [];
+            const sessions = [...(window.LocalDB.sessions || [])].sort((a,b) => b.year - a.year);
+            const actSession = window.DBHelpers.getActiveSession();
+            
+            let dashboardHtml = '';
+            if (actSession) {
+                const studentCount = (window.LocalDB.students || []).filter(s => s.activeStatus !== false).length;
+                const teachersInSess = new Set((window.LocalDB.assignments || []).filter(a => a.sessionId === actSession.id).map(a => a.teacherId)).size;
+                const acaCount = (window.LocalDB.academicMarks || []).filter(m => m.sessionId === actSession.id).length;
+                const pbdCount = (window.LocalDB.pbdRecords || []).filter(m => m.sessionId === actSession.id).length;
+                
+                dashboardHtml = `
+                <div class="bg-gradient-to-r from-blue-600 to-blue-800 text-white p-6 rounded-2xl shadow-sm mb-6 flex flex-col md:flex-row justify-between items-center gap-4">
+                    <div>
+                        <h3 class="text-xs font-bold text-blue-200 uppercase tracking-widest">Sesi Akademik Aktif</h3>
+                        <h2 class="text-3xl font-black uppercase tracking-tight">${actSession.name}</h2>
+                        <p class="text-sm mt-1 text-blue-100">${actSession.startDate || '-'} hingga ${actSession.endDate || '-'}</p>
+                    </div>
+                    <div class="flex gap-4 text-center">
+                        <div class="bg-white/10 p-3 rounded-xl min-w-[80px]">
+                            <p class="text-2xl font-black">${studentCount}</p>
+                            <p class="text-[10px] uppercase tracking-wider text-blue-200 mt-1">Murid</p>
+                        </div>
+                        <div class="bg-white/10 p-3 rounded-xl min-w-[80px]">
+                            <p class="text-2xl font-black">${teachersInSess}</p>
+                            <p class="text-[10px] uppercase tracking-wider text-blue-200 mt-1">Guru Ditugas</p>
+                        </div>
+                    </div>
+                </div>`;
+            }
+
             return `
             <div class="max-w-7xl mx-auto space-y-6 animate-fade-in pb-20">
+                ${dashboardHtml}
                 <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                     <div>
                         <h2 class="text-2xl font-bold text-gray-800 uppercase">Pengurusan Sesi Akademik</h2>
-                        <p class="text-sm text-gray-500">Tetapkan sesi akademik aktif untuk pengumpulan markah dan penilaian.</p>
+                        <p class="text-sm text-gray-500">Tetapkan sesi akademik, kawal penerbitan keputusan dan arkib data lama.</p>
                     </div>
                     <button onclick="window.openFormSesi()" class="bg-mattary hover:bg-mattary-dark text-white font-bold px-5 py-2.5 rounded-xl shadow transition-all text-sm flex items-center gap-2">
                         <i class="fa-solid fa-plus"></i> Tambah Sesi Baharu
@@ -1090,25 +1159,34 @@
                     <table class="w-full text-xs text-left sticky-header">
                         <thead class="bg-gray-100 uppercase text-gray-700">
                             <tr>
-                                <th class="px-4 py-3 w-12 text-center">Bil</th>
-                                <th class="px-4 py-3">Nama Sesi</th>
-                                <th class="px-4 py-3 text-center">Tahun</th>
-                                <th class="px-4 py-3 text-center">Status Aktif</th>
+                                <th class="px-4 py-3">Sesi</th>
+                                <th class="px-4 py-3 text-center">Tarikh Mula</th>
+                                <th class="px-4 py-3 text-center">Tarikh Tamat</th>
+                                <th class="px-4 py-3 text-center">Status</th>
+                                <th class="px-4 py-3 text-center">Terbit Keputusan</th>
                                 <th class="px-4 py-3 text-center">Tindakan</th>
                             </tr>
                         </thead>
                         <tbody class="divide-y divide-gray-100">
-                            ${sessions.length === 0 ? `<tr><td colspan="5" class="text-center py-8 text-gray-400">Tiada sesi direkodkan. Sila tambah sesi 2026.</td></tr>` : sessions.map((s, idx) => `
+                            ${sessions.length === 0 ? `<tr><td colspan="6" class="text-center py-8 text-gray-400">Tiada sesi direkodkan. Sila tambah sesi.</td></tr>` : sessions.map((s) => `
                             <tr class="hover:bg-gray-50">
-                                <td class="px-4 py-3 text-center font-bold text-gray-400">${idx + 1}</td>
-                                <td class="px-4 py-3 font-bold text-gray-900">${s.name}</td>
-                                <td class="px-4 py-3 text-center font-bold">${s.year || '-'}</td>
+                                <td class="px-4 py-3 font-bold text-gray-900 text-sm">${s.name} <br><span class="text-[10px] text-gray-500 uppercase">Tahun: ${s.year || '-'}</span></td>
+                                <td class="px-4 py-3 text-center font-medium">${s.startDate || '-'}</td>
+                                <td class="px-4 py-3 text-center font-medium">${s.endDate || '-'}</td>
                                 <td class="px-4 py-3 text-center">
-                                    ${s.isActive ? '<span class="px-3 py-1 bg-emerald-100 text-emerald-800 rounded-full text-xs font-black">AKTIF</span>' : '<span class="px-3 py-1 bg-gray-100 text-gray-600 rounded-full text-xs">TIDAK AKTIF</span>'}
+                                    ${s.isActive ? '<span class="px-3 py-1 bg-emerald-100 text-emerald-800 rounded-full text-xs font-black"><i class="fa-solid fa-check mr-1"></i> AKTIF</span>' : (s.isArchived ? '<span class="px-3 py-1 bg-gray-100 text-gray-600 rounded-full text-xs"><i class="fa-solid fa-box-archive mr-1"></i> ARKIB</span>' : '<span class="px-3 py-1 bg-amber-100 text-amber-800 rounded-full text-xs font-bold">AKAN DATANG</span>')}
                                 </td>
-                                <td class="px-4 py-3 text-center space-x-2">
-                                    ${!s.isActive ? `<button onclick="window.setActiveSession('${s.id}')" class="px-3 py-1 bg-blue-600 text-white rounded font-bold text-xs hover:bg-blue-700">Jadikan Aktif</button>` : ''}
-                                    <button onclick="window.deleteFirestoreDoc('sessions', '${s.id}')" class="text-red-500 hover:text-red-700 p-1"><i class="fa-solid fa-trash"></i></button>
+                                <td class="px-4 py-3 text-center">
+                                    <label class="relative inline-flex items-center cursor-pointer" title="${s.isPublished ? 'Keputusan Sedang Diterbitkan' : 'Keputusan Disembunyikan'}">
+                                        <input type="checkbox" onchange="window.toggleSessionPublish('${s.id}', this.checked)" class="sr-only peer" ${s.isPublished ? 'checked' : ''}>
+                                        <div class="w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-mattary"></div>
+                                    </label>
+                                </td>
+                                <td class="px-4 py-3 text-center space-x-1 whitespace-nowrap">
+                                    <button onclick="window.openFormSesi('${s.id}')" class="px-2.5 py-1.5 bg-gray-200 text-gray-700 rounded font-bold hover:bg-gray-300 shadow-sm" title="Kemaskini"><i class="fa-solid fa-pen"></i></button>
+                                    ${!s.isActive ? `<button onclick="window.setActiveSession('${s.id}')" class="px-3 py-1.5 bg-blue-600 text-white rounded font-bold hover:bg-blue-700 shadow-sm" title="Jadikan Aktif Semasa"><i class="fa-solid fa-power-off mr-1"></i> Aktifkan</button>` : ''}
+                                    ${!s.isArchived ? `<button onclick="window.archiveSession('${s.id}')" class="px-3 py-1.5 bg-amber-500 text-white rounded font-bold hover:bg-amber-600 shadow-sm" title="Arkibkan Sesi"><i class="fa-solid fa-box-archive mr-1"></i> Arkib</button>` : ''}
+                                    ${!s.isActive ? `<button onclick="window.deleteSessionWithCheck('${s.id}')" class="text-red-500 hover:text-red-700 px-2 py-1.5" title="Padam Kekal"><i class="fa-solid fa-trash"></i></button>` : ''}
                                 </td>
                             </tr>`).join('')}
                         </tbody>
@@ -1117,31 +1195,48 @@
             </div>`;
         };
 
-        window.openFormSesi = function() {
-            window.openModal('Tambah Sesi Akademik', `
-                <form onsubmit="window.saveSesi(event)" class="space-y-4">
-                    <div>
-                        <label class="block text-xs font-bold text-gray-700 uppercase mb-1">Nama Sesi</label>
-                        <input type="text" id="sesiName" required placeholder="Cth: SESI 2026" class="w-full border p-3 rounded-lg font-bold">
+        window.openFormSesi = function(editId = null) {
+            const s = editId ? (window.LocalDB.sessions || []).find(x => x.id === editId) : null;
+            window.openModal(s ? 'Kemaskini Sesi Akademik' : 'Tambah Sesi Akademik', `
+                <form onsubmit="window.saveSesi(event, '${editId || ''}')" class="space-y-4">
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-xs font-bold text-gray-700 uppercase mb-1">Nama Sesi</label>
+                            <input type="text" id="sesiName" required value="${s ? s.name : ''}" placeholder="Cth: SESI 2026" class="w-full border p-3 rounded-lg font-bold uppercase">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold text-gray-700 uppercase mb-1">Tahun Asas</label>
+                            <input type="number" id="sesiYear" required value="${s ? s.year : new Date().getFullYear()}" class="w-full border p-3 rounded-lg font-bold">
+                        </div>
                     </div>
-                    <div>
-                        <label class="block text-xs font-bold text-gray-700 uppercase mb-1">Tahun</label>
-                        <input type="number" id="sesiYear" required value="2026" class="w-full border p-3 rounded-lg font-bold">
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-xs font-bold text-gray-700 uppercase mb-1">Tarikh Mula</label>
+                            <input type="date" id="sesiStartDate" required value="${s && s.startDate ? s.startDate : ''}" class="w-full border p-3 rounded-lg font-bold">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold text-gray-700 uppercase mb-1">Tarikh Tamat</label>
+                            <input type="date" id="sesiEndDate" required value="${s && s.endDate ? s.endDate : ''}" class="w-full border p-3 rounded-lg font-bold">
+                        </div>
                     </div>
-                    <div class="flex items-center gap-2">
-                        <input type="checkbox" id="sesiActive" class="w-4 h-4 text-mattary rounded">
-                        <label for="sesiActive" class="text-xs font-bold text-gray-700 uppercase">Tetapkan sebagai Sesi Aktif Semasa</label>
-                    </div>
+                    ${!s ? `
+                    <div class="flex items-center gap-2 mt-2 bg-blue-50 p-3 rounded-xl border border-blue-100">
+                        <input type="checkbox" id="sesiActive" class="w-5 h-5 text-mattary rounded cursor-pointer">
+                        <label for="sesiActive" class="text-xs font-bold text-blue-800 uppercase cursor-pointer">Terus Jadikan Sebagai Sesi Aktif Semasa</label>
+                    </div>` : ''}
                     <button type="submit" class="w-full bg-mattary text-white font-bold py-3 rounded-lg mt-4 shadow hover:bg-mattary-dark">Simpan Sesi</button>
                 </form>
             `);
         };
 
-        window.saveSesi = async function(e) {
+        window.saveSesi = async function(e, editId) {
             e.preventDefault();
             const name = document.getElementById('sesiName').value.trim().toUpperCase();
             const year = Number(document.getElementById('sesiYear').value);
-            const isActive = document.getElementById('sesiActive').checked;
+            const startDate = document.getElementById('sesiStartDate').value;
+            const endDate = document.getElementById('sesiEndDate').value;
+            const activeCheckbox = document.getElementById('sesiActive');
+            const isActive = activeCheckbox ? activeCheckbox.checked : false;
 
             try {
                 if (isActive) {
@@ -1149,34 +1244,151 @@
                         if (s.isActive) await window.updateFirestoreDoc('sessions', s.id, { isActive: false });
                     }
                 }
-                await window.addFirestoreDoc('sessions', { name, year, isActive, createdAt: Date.now() });
+                
+                const payload = { name, year, startDate, endDate, updatedAt: Date.now() };
+                
+                if (editId) {
+                    await window.updateFirestoreDoc('sessions', editId, payload);
+                    window.showToast('Sesi akademik berjaya dikemas kini.', 'success');
+                } else {
+                    payload.isActive = isActive;
+                    payload.isArchived = false;
+                    payload.isPublished = false;
+                    payload.createdAt = Date.now();
+                    const docRef = await window.addFirestoreDoc('sessions', payload);
+                    if (isActive) {
+                        window.AppState.selectedSessionId = docRef.id;
+                        window.renderContextSessionSelector();
+                    }
+                    window.showToast('Sesi akademik baharu berjaya ditambah.', 'success');
+                }
                 window.closeModal();
-                window.showToast('Sesi akademik berjaya ditambah.', 'success');
             } catch(err) {
                 console.error(err);
                 window.showToast('Ralat menyimpan sesi.', 'error');
             }
         };
 
-        window.setActiveSession = async function(sessionId) {
-            try {
-                for (let s of window.LocalDB.sessions) {
-                    await window.updateFirestoreDoc('sessions', s.id, { isActive: s.id === sessionId });
+        window.setActiveSession = function(sessionId) {
+            const sessionToActivate = (window.LocalDB.sessions || []).find(s => s.id === sessionId);
+            const existingActive = (window.LocalDB.sessions || []).find(s => s.isActive);
+            
+            let confirmMsg = `Adakah anda pasti mahu mengaktifkan sesi <strong>${sessionToActivate.name}</strong>?`;
+            if (existingActive && existingActive.id !== sessionId) {
+                confirmMsg += `<br><br>Sesi aktif sekarang (<strong class="text-amber-600">${existingActive.name}</strong>) akan dinyahaktifkan dan statusnya bertukar kepada Arkib / Akan Datang.`;
+            }
+            
+            document.getElementById('confirm-modal-title').innerText = "Pengesahan Pengaktifan Sesi";
+            document.getElementById('confirm-modal-desc').innerHTML = confirmMsg;
+            const btn = document.getElementById('confirm-modal-btn');
+            btn.className = "px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-bold text-sm transition-colors shadow-md w-full";
+            btn.innerText = "Ya, Aktifkan Sesi";
+            
+            btn.onclick = async function() {
+                window.closeConfirmModal();
+                window.showToast('Sedang mengemaskini status sesi...', 'info');
+                
+                try {
+                    if (existingActive && existingActive.id !== sessionId) {
+                        await window.updateFirestoreDoc('sessions', existingActive.id, { isActive: false });
+                    }
+                    await window.updateFirestoreDoc('sessions', sessionId, { isActive: true, isArchived: false });
+                    
+                    window.AppState.selectedSessionId = sessionId;
+                    window.renderContextSessionSelector();
+                    window.showToast('Sesi berjaya diaktifkan.', 'success');
+                } catch(e) {
+                    window.showToast('Ralat mengaktifkan sesi.', 'error');
                 }
-                window.showToast('Sesi aktif berjaya dikemas kini.', 'success');
-            } catch(err) {
-                console.error(err);
-                window.showToast('Ralat menukar sesi aktif.', 'error');
+            };
+            
+            const modal = document.getElementById('confirm-modal');
+            modal.classList.remove('hidden');
+            setTimeout(() => modal.classList.remove('opacity-0'), 10);
+        };
+
+        window.archiveSession = function(sessionId) {
+            const sessionToArchive = (window.LocalDB.sessions || []).find(s => s.id === sessionId);
+            
+            document.getElementById('confirm-modal-title').innerText = "Pengesahan Arkib Sesi";
+            document.getElementById('confirm-modal-desc').innerHTML = `Adakah anda pasti mahu mengarkibkan sesi <strong>${sessionToArchive.name}</strong>?<br><br>Modul penugasan dan pengisian markah/PBD akan <strong class="text-red-500">ditutup</strong> untuk sesi ini (Mod Baca Sahaja).`;
+            const btn = document.getElementById('confirm-modal-btn');
+            btn.className = "px-5 py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-lg font-bold text-sm transition-colors shadow-md w-full";
+            btn.innerText = "Ya, Arkibkan Sesi";
+            
+            btn.onclick = async function() {
+                window.closeConfirmModal();
+                window.showToast('Sedang mengarkibkan sesi...', 'info');
+                
+                try {
+                    await window.updateFirestoreDoc('sessions', sessionId, { isArchived: true, isActive: false });
+                    window.renderContextSessionSelector();
+                    window.showToast('Sesi berjaya diarkibkan.', 'success');
+                } catch(e) {
+                    window.showToast('Ralat mengarkibkan sesi.', 'error');
+                }
+            };
+            
+            const modal = document.getElementById('confirm-modal');
+            modal.classList.remove('hidden');
+            setTimeout(() => modal.classList.remove('opacity-0'), 10);
+        };
+
+        window.deleteSessionWithCheck = function(sessionId) {
+            const hasMarks = (window.LocalDB.academicMarks || []).some(m => m.sessionId === sessionId);
+            const hasPBD = (window.LocalDB.pbdRecords || []).some(m => m.sessionId === sessionId);
+            const hasHafazan = (window.LocalDB.hafazanMarks || []).some(m => m.sessionId === sessionId);
+            const hasAssignments = (window.LocalDB.assignments || []).some(m => m.sessionId === sessionId);
+
+            if (hasMarks || hasPBD || hasHafazan || hasAssignments) {
+                window.showToast('AMARAN: Sesi ini mempunyai rekod markah/penugasan. Sila Arkibkan sesi ini, jangan padam data sejarah.', 'error');
+                return;
+            }
+
+            const sessionToDelete = (window.LocalDB.sessions || []).find(s => s.id === sessionId);
+
+            document.getElementById('confirm-modal-title').innerText = "Pengesahan Padam Sesi";
+            document.getElementById('confirm-modal-desc').innerHTML = `Adakah anda pasti mahu memadam sesi <strong>${sessionToDelete.name}</strong> secara kekal?<br><br><span class="text-red-500 font-bold">Tindakan ini tidak boleh dipulihkan.</span>`;
+            const btn = document.getElementById('confirm-modal-btn');
+            btn.className = "px-5 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-lg font-bold text-sm transition-colors shadow-md w-full";
+            btn.innerText = "Ya, Padam Kekal";
+            
+            btn.onclick = async function() {
+                window.closeConfirmModal();
+                window.showToast('Sedang memadam sesi...', 'info');
+                
+                try {
+                    await window.deleteFirestoreDoc('sessions', sessionId);
+                    window.showToast('Sesi berjaya dipadam.', 'success');
+                } catch(e) {
+                    window.showToast('Ralat memadam sesi.', 'error');
+                }
+            };
+            
+            const modal = document.getElementById('confirm-modal');
+            modal.classList.remove('hidden');
+            setTimeout(() => modal.classList.remove('opacity-0'), 10);
+        };
+
+        window.toggleSessionPublish = async function(sessionId, isPublished) {
+            try {
+                await window.updateFirestoreDoc('sessions', sessionId, { isPublished });
+                window.showToast(isPublished ? 'Keputusan sesi ini berjaya diterbitkan kepada Ibu Bapa.' : 'Keputusan disembunyikan.', 'success');
+            } catch(e) {
+                window.showToast('Ralat mengemaskini status terbitan.', 'error');
             }
         };
 
         // PANGKALAN DATA MURID
         window.renderUI_Murid = function() {
-            const classes = window.DBHelpers.getSortedClasses(window.LocalDB.classes || []);
+            const contextSession = window.DBHelpers.getContextSession();
+            if (!contextSession) return window.renderNoSessionState();
+            
+            const classes = window.DBHelpers.getSortedClasses((window.LocalDB.classes || []).filter(c => !c.sessionId || c.sessionId === contextSession.id));
             const selectedYear = window.DataFilterState.muridYear || '';
             const selectedClassId = window.DataFilterState.muridClassId || '';
 
-            let students = window.LocalDB.students || [];
+            let students = (window.LocalDB.students || []).filter(s => !s.sessionId || s.sessionId === contextSession.id);
             if (selectedYear) {
                 const matchingClassIds = classes.filter(c => String(c.yearLevel) === String(selectedYear)).map(c => c.id);
                 students = students.filter(s => matchingClassIds.includes(s.classId));
@@ -1191,7 +1403,7 @@
                 <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                     <div>
                         <h2 class="text-2xl font-bold text-gray-800 uppercase">Pangkalan Data Murid</h2>
-                        <p class="text-sm text-gray-500">Urus maklumat murid, import pukal Excel, eksport dan kemas kini manual.</p>
+                        <p class="text-sm text-gray-500">Urus maklumat murid untuk sesi <span class="font-bold text-mattary uppercase">${contextSession.name}</span>.</p>
                     </div>
                     <div class="flex flex-wrap gap-2">
                         <button onclick="window.downloadTemplate('MURID')" class="bg-blue-600 text-white px-4 py-2.5 rounded-xl text-xs font-bold shadow hover:bg-blue-700 flex items-center gap-2"><i class="fa-solid fa-file-arrow-down"></i> Template</button>
@@ -1265,7 +1477,8 @@
         };
 
         window.openFormMurid = function(editId = null) {
-            const classes = window.DBHelpers.getSortedClasses(window.LocalDB.classes || []);
+            const contextSession = window.DBHelpers.getContextSession();
+            const classes = window.DBHelpers.getSortedClasses((window.LocalDB.classes || []).filter(c => !c.sessionId || (contextSession && c.sessionId === contextSession.id)));
             const std = editId ? (window.LocalDB.students || []).find(s => s.id === editId) : null;
             
             window.openModal(std ? 'Kemaskini Data Murid' : 'Tambah Murid Baharu', `
@@ -1306,6 +1519,8 @@
             const gender = document.getElementById('mGender').value;
             const classId = document.getElementById('mClassId').value;
             const actSession = window.DBHelpers.getActiveSession();
+            
+            if(!actSession) return window.showToast('Sila aktifkan sesi akademik terlebih dahulu sebelum menambah murid.', 'error');
 
             try {
                 const payload = {
@@ -1313,7 +1528,7 @@
                     myKid,
                     gender,
                     classId,
-                    sessionId: actSession ? actSession.id : '',
+                    sessionId: actSession.id,
                     activeStatus: true,
                     updatedAt: Date.now()
                 };
@@ -1322,7 +1537,12 @@
                     await window.updateFirestoreDoc('students', editId, payload);
                     window.showToast('Maklumat murid berjaya dikemas kini.', 'success');
                 } else {
-                    await window.addFirestoreDoc('students', payload);
+                    const existing = (window.LocalDB.students || []).find(s => s.myKid === myKid && (s.sessionId === actSession.id || !s.sessionId));
+                    if(existing) {
+                        await window.updateFirestoreDoc('students', existing.id, payload);
+                    } else {
+                        await window.addFirestoreDoc('students', payload);
+                    }
                     window.showToast('Murid baharu berjaya ditambah.', 'success');
                 }
                 window.closeModal();
@@ -1443,7 +1663,10 @@
 
         // PANGKALAN DATA KELAS
         window.renderUI_Kelas = function() {
-            const classes = window.DBHelpers.getSortedClasses(window.LocalDB.classes || []);
+            const contextSession = window.DBHelpers.getContextSession();
+            if (!contextSession) return window.renderNoSessionState();
+            
+            const classes = window.DBHelpers.getSortedClasses((window.LocalDB.classes || []).filter(c => !c.sessionId || c.sessionId === contextSession.id));
             const teachers = window.DBHelpers.getSortedTeachers(window.LocalDB.teachers || []);
 
             return `
@@ -1451,7 +1674,7 @@
                 <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                     <div>
                         <h2 class="text-2xl font-bold text-gray-800 uppercase">Pangkalan Data Kelas</h2>
-                        <p class="text-sm text-gray-500">Pengurusan kelas rasmi sekolah serta perlantikan Guru Kelas.</p>
+                        <p class="text-sm text-gray-500">Pengurusan kelas rasmi sekolah untuk sesi <span class="font-bold text-mattary uppercase">${contextSession.name}</span>.</p>
                     </div>
                     <div class="flex flex-wrap gap-2">
                         <button onclick="window.downloadTemplate('KELAS')" class="bg-blue-600 text-white px-4 py-2.5 rounded-xl text-xs font-bold shadow hover:bg-blue-700 flex items-center gap-2"><i class="fa-solid fa-file-arrow-down"></i> Template</button>
@@ -1551,14 +1774,22 @@
             const name = document.getElementById('kName').value.trim().toUpperCase();
             const formTeacherAcaId = document.getElementById('kTeacherAcaId').value;
             const formTeacherHafId = document.getElementById('kTeacherHafId').value;
+            const actSession = window.DBHelpers.getActiveSession();
+            
+            if(!actSession) return window.showToast('Sila aktifkan sesi akademik terlebih dahulu sebelum menambah kelas.', 'error');
 
             try {
-                const payload = { yearLevel, name, formTeacherAcaId, formTeacherHafId, status: true, updatedAt: Date.now() };
+                const payload = { yearLevel, name, formTeacherAcaId, formTeacherHafId, status: true, sessionId: actSession.id, updatedAt: Date.now() };
                 if (editId) {
                     await window.updateFirestoreDoc('classes', editId, payload);
                     window.showToast('Maklumat kelas berjaya dikemas kini.', 'success');
                 } else {
-                    await window.addFirestoreDoc('classes', payload);
+                    const existing = (window.LocalDB.classes || []).find(c => c.name === name && c.yearLevel === yearLevel && (c.sessionId === actSession.id || !c.sessionId));
+                    if(existing) {
+                        await window.updateFirestoreDoc('classes', existing.id, payload);
+                    } else {
+                        await window.addFirestoreDoc('classes', payload);
+                    }
                     window.showToast('Kelas baharu berjaya ditambah.', 'success');
                 }
                 window.closeModal();
@@ -1684,11 +1915,11 @@
         // EXPORT DATA
         window.exportData = function(type) {
             let exportData = [], fileName = '';
+            const contextSession = window.DBHelpers.getContextSession();
             
             if (type === 'MURID') {
-                const sortedStudents = [...(window.LocalDB.students || [])].sort((a,b) => {
-                    const clsA = window.DBHelpers.getClass(a.classId);
-                    const clsB = window.DBHelpers.getClass(b.classId);
+                const studentsList = (window.LocalDB.students || []).filter(s => contextSession && (!s.sessionId || s.sessionId === contextSession.id));
+                const sortedStudents = [...studentsList].sort((a,b) => {
                     const yA = Number(clsA ? clsA.yearLevel : 0) || 0;
                     const yB = Number(clsB ? clsB.yearLevel : 0) || 0;
                     if (yA !== yB) return yA - yB;
@@ -1798,7 +2029,7 @@
 
                                 let classId = '';
                                 if (className) {
-                                    const foundClass = (window.LocalDB.classes || []).find(c => window.DBHelpers.formatClassName(c) === className);
+                                    const foundClass = (window.LocalDB.classes || []).find(c => window.DBHelpers.formatClassName(c) === className && (!c.sessionId || (actSession && c.sessionId === actSession.id)));
                                     if (foundClass) classId = foundClass.id;
                                 }
 
@@ -1812,7 +2043,7 @@
                                     updatedAt: Date.now()
                                 };
 
-                                const existing = (window.LocalDB.students || []).find(s => s.myKid === myKid);
+                                const existing = (window.LocalDB.students || []).find(s => s.myKid === myKid && (s.sessionId === actSession.id || !s.sessionId));
                                 if (existing) await window.updateFirestoreDoc('students', existing.id, payload);
                                 else await window.addFirestoreDoc('students', payload);
                                 successCount++;
@@ -1845,8 +2076,8 @@
                                     if (foundT) teacherHafId = foundT.id;
                                 }
 
-                                const payload = { yearLevel, name, formTeacherAcaId: teacherAcaId, formTeacherHafId: teacherHafId, status: true, updatedAt: Date.now() };
-                                const existing = (window.LocalDB.classes || []).find(c => c.name === name && c.yearLevel === yearLevel);
+                                const payload = { yearLevel, name, formTeacherAcaId: teacherAcaId, formTeacherHafId: teacherHafId, status: true, sessionId: actSession ? actSession.id : '', updatedAt: Date.now() };
+                                const existing = (window.LocalDB.classes || []).find(c => c.name === name && c.yearLevel === yearLevel && (c.sessionId === actSession.id || !c.sessionId));
                                 if (existing) await window.updateFirestoreDoc('classes', existing.id, payload);
                                 else await window.addFirestoreDoc('classes', payload);
                                 successCount++;
@@ -1985,17 +2216,22 @@
         // PENUGASAN GURU (MULTI-SELECT CLASSES & INDEPENDENT SUBJECTS)
         window.renderUI_Penugasan = function() {
             const teachers = window.DBHelpers.getSortedTeachers(window.LocalDB.teachers || []);
-            const classes = window.DBHelpers.getSortedClasses(window.LocalDB.classes || []);
             const subjects = (window.LocalDB.subjects || []).filter(s => s.status !== false);
-            const actSession = window.DBHelpers.getActiveSession();
-            const sessionId = actSession ? actSession.id : '';
+            
+            const sessionId = window.AppState.selectedSessionId || (window.DBHelpers.getActiveSession() ? window.DBHelpers.getActiveSession().id : '');
+            const contextSession = window.DBHelpers.getSession(sessionId);
 
+            if (!contextSession) {
+                return window.renderNoSessionState();
+            }
+            
+            const classes = window.DBHelpers.getSortedClasses((window.LocalDB.classes || []).filter(c => !c.sessionId || c.sessionId === contextSession.id));
+            
             if (teachers.length === 0 || classes.length === 0) {
                 return `<div class="p-8 text-center bg-white rounded-2xl shadow-sm border"><h3 class="text-lg font-bold">Pangkalan Data Belum Lengkap</h3><p class="text-sm text-gray-500 mt-1">Sila pastikan senarai guru dan kelas telah didaftarkan terlebih dahulu.</p></div>`;
             }
 
-            // Calculate overall Penugasan KPI metrics
-            const allAssignments = (window.LocalDB.assignments || []).filter(a => !sessionId || a.sessionId === sessionId);
+            const allAssignments = (window.LocalDB.assignments || []).filter(a => a.sessionId === sessionId);
             const assignedTeacherIds = new Set(allAssignments.map(a => a.teacherId));
             const totalTeachersCount = teachers.length;
             const completedTeachersCount = assignedTeacherIds.size;
@@ -2056,7 +2292,7 @@
                 <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                     <div>
                         <h2 class="text-2xl font-bold text-gray-800 uppercase">Penugasan Guru — Multi Kelas & Subjek</h2>
-                        <p class="text-sm text-gray-500">Pilih guru, tandakan kelas pelbagai dan tentukan subjek berasingan untuk setiap kelas.</p>
+                        <p class="text-sm text-gray-500">Sesi: <span class="font-bold text-mattary uppercase">${contextSession.name}</span>. Pilih guru dan tentukan subjek berasingan untuk setiap kelas.</p>
                     </div>
                     <div>
                         <label class="block text-[10px] font-bold text-gray-500 uppercase mb-1">Pilih Guru (✅ Selesai | ⏳ Belum)</label>
@@ -2283,9 +2519,10 @@
             window.showToast('Menyimpan penugasan guru...', 'info');
 
             const teacherId = window.PenugasanState.selectedTeacherId;
-            const actSession = window.DBHelpers.getActiveSession();
-            const sessionId = actSession ? actSession.id : '';
-            const existingAssignments = (window.LocalDB.assignments || []).filter(a => a.teacherId === teacherId && (!sessionId || a.sessionId === sessionId));
+            const sessionId = window.AppState.selectedSessionId;
+            if (!sessionId) return window.showToast('Tiada Sesi Akademik aktif. Sila aktifkan sesi terlebih dahulu.', 'error');
+            
+            const existingAssignments = (window.LocalDB.assignments || []).filter(a => a.teacherId === teacherId && a.sessionId === sessionId);
 
             // Build desired assignments map
             const desiredAssignments = [];
@@ -2337,12 +2574,12 @@
         };
 
         window.renderAnalisisHeader = function(activeTab, filtersHtml) {
+            const contextSession = window.DBHelpers.getContextSession();
             return `
             <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 mb-6 no-print">
                 <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-4">
                     <div>
-                        <h2 class="text-2xl font-bold text-gray-800 uppercase">Analisis & Laporan</h2>
-                        <p class="text-sm text-gray-500">Analisis menyeluruh berserta Headcount, GPS dan GPMP.</p>
+                        <h2 class="text-2xl font-bold text-gray-800 uppercase">Analisis & Laporan <span class="text-mattary">(${contextSession ? contextSession.name : '-'})</span></h2>
                     </div>
                     <div class="flex bg-gray-100 p-1 rounded-xl border border-gray-200">
                         <button onclick="window.AdminAnalisisState.viewType = 'KELAS'; window.renderContent('analisis');" class="px-4 py-2 text-xs font-bold rounded-lg transition-colors ${activeTab === 'KELAS' ? 'bg-white shadow text-mattary' : 'text-gray-500 hover:text-gray-900'}">Mengikut Kelas</button>
@@ -2368,6 +2605,8 @@
         window.renderUI_Analisis_Kelas = function() {
             const classes = window.DBHelpers.getSortedClasses(window.LocalDB.classes || []);
             if (classes.length === 0) return `<div class="p-8 text-center text-gray-500 font-bold">Tiada data kelas ditemui. Sila daftar kelas terlebih dahulu.</div>`;
+            const contextSession = window.DBHelpers.getContextSession();
+            if (!contextSession) return window.renderNoSessionState();
 
             let selectedClassId = window.AdminAnalisisState.classId;
             let selectedClass = window.DBHelpers.getClass(selectedClassId);
@@ -2388,7 +2627,7 @@
                 window.AdminAnalisisState.exam = 'UPSA';
             }
 
-            const reportData = window.calculateClassRankingData(selectedClassId, actSession ? actSession.id : '', selectedExam);
+            const reportData = window.calculateClassRankingData(selectedClassId, contextSession.id, selectedExam);
             
             const isHafazanExam = ['UPSEH', 'UASEH', 'UPAIM'].includes(selectedExam);
             const activeFormTeacherId = isHafazanExam ? (selectedClass.formTeacherHafId || selectedClass.formTeacherId) : (selectedClass.formTeacherAcaId || selectedClass.formTeacherId);
@@ -2413,7 +2652,7 @@
                         <div>
                             <span class="bg-blue-100 text-blue-800 text-xs font-bold px-3 py-1 rounded-full uppercase">ANALISIS KELAS</span>
                             <h1 class="text-2xl font-black text-gray-900 uppercase mt-2">${window.DBHelpers.formatClassName(selectedClass)}</h1>
-                            <p class="text-xs text-gray-500 mt-1">Sesi: <span class="font-bold text-gray-800">${actSession ? actSession.name : '-'}</span> | Pentaksiran: <span class="font-bold text-mattary uppercase">${selectedExam}</span></p>
+                            <p class="text-xs text-gray-500 mt-1">Sesi: <span class="font-bold text-gray-800">${contextSession.name}</span> | Pentaksiran: <span class="font-bold text-mattary uppercase">${selectedExam}</span></p>
                         </div>
                         <div class="text-left md:text-right">
                             <p class="text-xs text-gray-500 uppercase font-bold">Guru Kelas</p>
@@ -2509,6 +2748,8 @@
         window.renderUI_Analisis_Tahun = function() {
             const allYearLevels = ['1', '2', '3', '4', '5', '6', 'SEMUA'];
             const yearLevel = window.AdminAnalisisState.yearLevel || '1';
+            const contextSession = window.DBHelpers.getContextSession();
+            if (!contextSession) return window.renderNoSessionState();
             
             const isYear6OrSemua = yearLevel === '6' || yearLevel === 'SEMUA';
             const examOptions = isYear6OrSemua ? ['UPSA', 'UASA', 'UPSEH', 'UASEH', 'UPAIM'] : ['UPSA', 'UASA', 'UPSEH', 'UASEH'];
@@ -2525,7 +2766,7 @@
             let grandTotalGrades = { A:0, B:0, C:0, D:0, E:0, F:0 };
             
             const classReports = classesToProcess.map(c => {
-                const report = window.calculateClassRankingData(c.id, actSession ? actSession.id : '', selectedExam);
+                const report = window.calculateClassRankingData(c.id, contextSession.id, selectedExam);
                 grandTotalStudents += report.kpi.totalStudents;
                 grandTotalGrades.A += report.kpi.totalGrades.A;
                 grandTotalGrades.B += report.kpi.totalGrades.B;
@@ -2565,7 +2806,7 @@
                         <div>
                             <span class="bg-purple-100 text-purple-800 text-xs font-bold px-3 py-1 rounded-full uppercase">GPS & HEADCOUNT TAHUNAN</span>
                             <h1 class="text-2xl font-black text-gray-900 uppercase mt-2">PRESTASI KESELURUHAN TAHUN ${yearLevel}</h1>
-                            <p class="text-xs text-gray-500 mt-1">Sesi: <span class="font-bold text-gray-800">${actSession ? actSession.name : '-'}</span> | Pentaksiran: <span class="font-bold text-mattary uppercase">${selectedExam}</span></p>
+                            <p class="text-xs text-gray-500 mt-1">Sesi: <span class="font-bold text-gray-800">${contextSession.name}</span> | Pentaksiran: <span class="font-bold text-mattary uppercase">${selectedExam}</span></p>
                         </div>
                         <div class="bg-gray-900 text-white p-4 rounded-xl text-center shadow-md min-w-[140px]">
                             <p class="text-[10px] uppercase font-bold text-gray-400">Gred Purata (GPS)</p>
@@ -2640,6 +2881,9 @@
 
         window.renderUI_Analisis_Subjek = function() {
             const yearLevel = window.AdminAnalisisState.yearLevel || '1';
+            const contextSession = window.DBHelpers.getContextSession();
+            if (!contextSession) return window.renderNoSessionState();
+
             const isYear6 = yearLevel === '6';
             const examOptions = isYear6 ? ['UPSA', 'UASA', 'UPSEH', 'UASEH', 'UPAIM'] : ['UPSA', 'UASA', 'UPSEH', 'UASEH'];
             let selectedExam = window.AdminAnalisisState.exam || 'UPSA';
@@ -2661,11 +2905,10 @@
 
             const subjectReports = applicableSubjects.map(sub => {
                 let counts = { A:0, B:0, C:0, D:0, E:0, F:0 };
-                let calonDaftar = studentsInYear.length;
                 let calonHadir = 0;
 
                 studentsInYear.forEach(std => {
-                    const markRec = allMarks.find(m => m.myKid === std.myKid && m.subjectId === sub.id && m.examType === selectedExam && m.sessionId === (actSession ? actSession.id : ''));
+                    const markRec = allMarks.find(m => m.myKid === std.myKid && m.subjectId === sub.id && m.examType === selectedExam && m.sessionId === contextSession.id);
                     if (markRec && markRec.percentage != null && !isNaN(markRec.percentage)) {
                         calonHadir++;
                         const grade = window.getGradeFromPercentage(Number(markRec.percentage));
@@ -2703,7 +2946,7 @@
                         <div>
                             <span class="bg-amber-100 text-amber-800 text-xs font-bold px-3 py-1 rounded-full uppercase">GPMP & HEADCOUNT MATA PELAJARAN</span>
                             <h1 class="text-2xl font-black text-gray-900 uppercase mt-2">PRESTASI MATA PELAJARAN TAHUN ${yearLevel}</h1>
-                            <p class="text-xs text-gray-500 mt-1">Sesi: <span class="font-bold text-gray-800">${actSession ? actSession.name : '-'}</span> | Pentaksiran: <span class="font-bold text-mattary uppercase">${selectedExam}</span></p>
+                            <p class="text-xs text-gray-500 mt-1">Sesi: <span class="font-bold text-gray-800">${contextSession.name}</span> | Pentaksiran: <span class="font-bold text-mattary uppercase">${selectedExam}</span></p>
                         </div>
                         <div class="bg-gray-50 border border-gray-200 p-4 rounded-xl text-center shadow-sm min-w-[140px]">
                             <p class="text-[10px] uppercase font-bold text-gray-500">Jumlah Calon Daftar</p>
@@ -2765,6 +3008,9 @@
             const std = (window.LocalDB.students || []).find(s => s.myKid === myKid);
             if (!std) return window.renderUI_Analisis();
 
+            const contextSession = window.DBHelpers.getContextSession();
+            if (!contextSession) return window.renderNoSessionState();
+
             const classObj = window.DBHelpers.getClass(std.classId);
             const actSession = window.DBHelpers.getActiveSession();
             
@@ -2774,7 +3020,7 @@
             let countA = 0, countB = 0, countC = 0, countD = 0, countE = 0, countF = 0;
 
             acaSubjects.forEach(sub => {
-                const rec = (window.LocalDB.academicMarks || []).find(m => m.myKid === std.myKid && m.subjectId === sub.id && m.examType === selectedExam && m.sessionId === (actSession ? actSession.id : ''));
+                const rec = (window.LocalDB.academicMarks || []).find(m => m.myKid === std.myKid && m.subjectId === sub.id && m.examType === selectedExam && m.sessionId === contextSession.id);
                 if (rec && rec.percentage != null && !isNaN(rec.percentage)) {
                     const pct = Number(rec.percentage);
                     validPcts.push(pct);
@@ -2798,18 +3044,18 @@
                 avgGrade = window.getGradeFromPercentage(avgPct);
             }
 
-            const rankingData = window.calculateClassRankingData(classObj.id, actSession ? actSession.id : '', selectedExam);
+            const rankingData = window.calculateClassRankingData(classObj.id, contextSession.id, selectedExam);
             const stdRankObj = rankingData.students.find(item => item.student.myKid === std.myKid);
             const rankStr = stdRankObj && stdRankObj.isComplete ? stdRankObj.rank : '-';
 
             const hafSubjects = (window.LocalDB.subjects || []).filter(s => s.status !== false && s.type === 'HAFAZAN' && window.DBHelpers.isSubjectApplicableToYear(s, classObj.yearLevel));
             const hafExam = ['UPSEH', 'UASEH', 'UPAIM'].includes(selectedExam) ? selectedExam : 'UPSEH';
             const hafResults = hafSubjects.map(sub => {
-                const rec = (window.LocalDB.hafazanMarks || []).find(m => m.myKid === std.myKid && m.subjectId === sub.id && m.examType === hafExam && m.sessionId === (actSession ? actSession.id : ''));
+                const rec = (window.LocalDB.hafazanMarks || []).find(m => m.myKid === std.myKid && m.subjectId === sub.id && m.examType === hafExam && m.sessionId === contextSession.id);
                 return { sub, percentage: rec && rec.percentage != null ? rec.percentage + '%' : '-', grade: rec ? rec.grade : '-' };
             });
 
-            const commentRec = (window.LocalDB.examComments || []).find(c => c.myKid === std.myKid && c.sessionId === (actSession ? actSession.id : '') && c.examType === selectedExam);
+            const commentRec = (window.LocalDB.examComments || []).find(c => c.myKid === std.myKid && c.sessionId === contextSession.id && c.examType === selectedExam);
             const currentComment = commentRec ? commentRec.comment : '';
 
             return `
@@ -2834,7 +3080,7 @@
                         </div>
                         <div class="text-left md:text-right">
                             <p class="text-xs text-gray-500 uppercase font-bold">Kelas: <span class="text-gray-900">${window.DBHelpers.formatClassName(classObj)}</span></p>
-                            <p class="text-xs text-gray-500 uppercase font-bold mt-1">Sesi: <span class="text-gray-900">${actSession ? actSession.name : '-'}</span></p>
+                            <p class="text-xs text-gray-500 uppercase font-bold mt-1">Sesi: <span class="text-gray-900">${contextSession.name}</span></p>
                             <p class="text-xs text-gray-500 uppercase font-bold mt-1">Pentaksiran: <span class="text-mattary">${selectedExam}</span></p>
                         </div>
                     </div>
@@ -2927,10 +3173,18 @@
 
         window.renderUI_TeacherDashboard = function() {
             const teacherId = window.AppState.userId;
+            const contextSession = window.DBHelpers.getContextSession();
+            
+            if (!contextSession) return window.renderNoSessionState();
+            
             const actSession = window.DBHelpers.getActiveSession();
-            const assignedClasses = window.DBHelpers.getAssignedClassesForTeacher(teacherId, actSession ? actSession.id : '');
-            const formClasses = window.DBHelpers.getFormClassesForTeacher(teacherId);
+            const sessionIdToUse = contextSession ? contextSession.id : '';
+            
+            const assignedClasses = window.DBHelpers.getAssignedClassesForTeacher(teacherId, sessionIdToUse);
+            const formClasses = window.DBHelpers.getFormClassesForTeacher(teacherId, sessionIdToUse);
             const isFormT = formClasses.length > 0;
+
+            const formClassesStr = isFormT ? formClasses.map(c => window.DBHelpers.formatClassName(c)).join(', ') : 'TIADA';
 
             return `
             <div class="max-w-7xl mx-auto space-y-6 animate-fade-in pb-20">
@@ -2939,64 +3193,58 @@
                     <div class="relative z-10">
                         <span class="bg-mattary-gold text-slate-900 font-bold text-xs px-3 py-1 rounded-full uppercase">PANEL GURU / PENGAJAR</span>
                         <h1 class="text-3xl font-extrabold mt-3 uppercase">Selamat Datang, ${window.AppState.currentUser.name}</h1>
-                        <p class="text-emerald-100 text-sm mt-1">Sesi Akademik Semasa: <span class="font-bold">${actSession ? actSession.name : 'Tiada Sesi Aktif'}</span></p>
+                        <p class="text-emerald-100 text-sm mt-1">Mod Paparan Semasa: <span class="font-bold">${contextSession ? contextSession.name : 'Tiada Sesi'}</span> ${(actSession && contextSession && actSession.id !== contextSession.id) ? '<span class="text-amber-300 ml-2 font-bold">(Mod Arkib / Terdahulu)</span>' : ''}</p>
                     </div>
                 </div>
 
+                <!-- KPI SUMMARY CARDS -->
                 <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-                    <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-200">
-                        <div class="flex items-center gap-4">
-                            <div class="w-12 h-12 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center text-xl font-bold"><i class="fa-solid fa-school"></i></div>
-                            <div>
-                                <p class="text-xs text-gray-500 uppercase font-bold">Kelas Diajar</p>
-                                <p class="text-2xl font-black text-gray-800">${assignedClasses.length}</p>
-                            </div>
+                    <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 flex items-center gap-5">
+                        <div class="w-14 h-14 bg-blue-50 text-blue-600 rounded-xl flex items-center justify-center text-2xl shrink-0"><i class="fa-solid fa-school"></i></div>
+                        <div>
+                            <p class="text-[11px] font-bold text-gray-500 uppercase tracking-wider mb-1">Kelas Diajar</p>
+                            <p class="text-2xl font-black text-gray-900 leading-none">${assignedClasses.length}</p>
                         </div>
                     </div>
-                    <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-200">
-                        <div class="flex items-center gap-4">
-                            <div class="w-12 h-12 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center text-xl font-bold"><i class="fa-solid fa-address-book"></i></div>
-                            <div>
-                                <p class="text-xs text-gray-500 uppercase font-bold">Guru Kelas</p>
-                                <p class="text-sm font-bold text-gray-800 uppercase">${isFormT ? formClasses.map(c => window.DBHelpers.formatClassName(c)).join(', ') : 'Bukan Guru Kelas'}</p>
-                            </div>
+                    <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 flex items-center gap-5">
+                        <div class="w-14 h-14 bg-emerald-50 text-emerald-600 rounded-xl flex items-center justify-center text-2xl shrink-0"><i class="fa-solid fa-address-book"></i></div>
+                        <div>
+                            <p class="text-[11px] font-bold text-gray-500 uppercase tracking-wider mb-1">Guru Kelas</p>
+                            <p class="text-lg font-black text-gray-900 uppercase leading-none mt-1">${formClassesStr}</p>
                         </div>
                     </div>
-                    <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-200">
-                        <div class="flex items-center gap-4">
-                            <div class="w-12 h-12 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center text-xl font-bold"><i class="fa-solid fa-pen-to-square"></i></div>
-                            <div>
-                                <p class="text-xs text-gray-500 uppercase font-bold">Modul Pantas</p>
-                                <div class="flex gap-2 mt-1">
-                                    <button onclick="window.renderContent('teacher-mark-entry')" class="text-xs bg-mattary text-white px-3 py-1.5 rounded font-bold hover:bg-mattary-dark transition-colors">Markah</button>
-                                    <button onclick="window.renderContent('teacher-pbd-entry')" class="text-xs bg-emerald-600 text-white px-3 py-1.5 rounded font-bold hover:bg-emerald-700 transition-colors">PBD (TP)</button>
-                                </div>
+                    <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 flex items-center gap-5">
+                        <div class="w-14 h-14 bg-amber-50 text-amber-600 rounded-xl flex items-center justify-center text-2xl shrink-0"><i class="fa-solid fa-pen-to-square"></i></div>
+                        <div class="flex-1">
+                            <p class="text-[11px] font-bold text-gray-500 uppercase tracking-wider mb-2">Modul Pantas</p>
+                            <div class="flex gap-2">
+                                <button onclick="window.renderContent('teacher-mark-entry')" class="flex-1 bg-mattary text-white py-1.5 px-2 rounded-lg text-xs font-bold shadow hover:bg-mattary-dark transition-colors">Markah</button>
+                                <button onclick="window.renderContent('teacher-pbd-entry')" class="flex-1 bg-emerald-600 text-white py-1.5 px-2 rounded-lg text-xs font-bold shadow hover:bg-emerald-700 transition-colors">PBD (TP)</button>
                             </div>
                         </div>
                     </div>
                 </div>
 
-                <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-200">
-                    <h3 class="text-lg font-bold text-gray-800 mb-4 uppercase">Senarai Kelas & Subjek Penugasan Anda</h3>
-                    ${assignedClasses.length === 0 ? `<div class="p-8 text-center text-gray-400">Tiada penugasan kelas direkodkan untuk anda dalam sesi ini. Sila hubungi Pentadbir.</div>` : `
-                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                <div class="bg-white p-6 md:p-8 rounded-2xl shadow-sm border border-gray-200">
+                    <h3 class="text-lg font-black text-slate-800 mb-6 uppercase tracking-wide">Senarai Kelas & Subjek Penugasan Anda</h3>
+                    ${assignedClasses.length === 0 ? `<div class="p-8 text-center text-gray-400 border-2 border-dashed border-gray-200 rounded-xl"><i class="fa-solid fa-link-slash text-4xl mb-3 text-gray-300"></i><p class="font-bold">Tiada penugasan kelas direkodkan untuk anda.</p><p class="text-xs mt-1">Sila hubungi Pentadbir Sistem untuk mengemaskini jadual mengajar anda.</p></div>` : `
+                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                         ${assignedClasses.map(cls => {
-                            const subs = window.DBHelpers.getAssignedSubjectsForClass(teacherId, cls.id, actSession ? actSession.id : '');
+                            const subs = window.DBHelpers.getAssignedSubjectsForClass(teacherId, cls.id, sessionIdToUse);
                             return `
-                            <div class="border border-gray-200 rounded-xl p-5 bg-gray-50 flex flex-col justify-between hover:border-mattary transition-colors">
+                            <div class="border border-gray-200 rounded-2xl p-6 bg-white flex flex-col justify-between hover:border-emerald-500 hover:shadow-md transition-all group">
                                 <div>
-                                    <h4 class="font-bold text-gray-900 uppercase text-base">${window.DBHelpers.formatClassName(cls)}</h4>
-                                    <p class="text-xs text-gray-500 mt-1">Tahun ${cls.yearLevel}</p>
-                                    <div class="mt-3 space-y-1">
-                                        <p class="text-xs font-bold text-gray-600 uppercase">Subjek Diajar:</p>
-                                        <div class="flex flex-wrap gap-1">
-                                            ${subs.map(sub => `<span class="bg-white border text-emerald-800 text-[11px] font-bold px-2 py-0.5 rounded shadow-sm uppercase">${sub.name} (${sub.code})</span>`).join('')}
-                                        </div>
+                                    <h4 class="font-black text-slate-900 uppercase text-xl">${window.DBHelpers.formatClassName(cls)}</h4>
+                                    <p class="text-sm text-gray-500 mt-1 mb-5">Tahun ${cls.yearLevel}</p>
+                                    
+                                    <p class="text-[11px] font-bold text-gray-500 uppercase tracking-wider mb-2">Subjek Diajar:</p>
+                                    <div class="flex flex-wrap gap-2 mb-6">
+                                        ${subs.map(sub => `<span class="bg-white border border-emerald-200 text-emerald-700 text-xs font-bold px-3 py-1.5 rounded-lg uppercase shadow-sm">${sub.name} (${sub.code})</span>`).join('')}
                                     </div>
                                 </div>
-                                <div class="flex gap-2 mt-4">
-                                    <button onclick="window.TeacherMarkState.classId = '${cls.id}'; window.renderContent('teacher-mark-entry');" class="flex-1 bg-mattary text-white py-2 rounded-lg text-xs font-bold hover:bg-mattary-dark transition-colors">Isi Markah</button>
-                                    <button onclick="window.TeacherPBDState.classId = '${cls.id}'; window.renderContent('teacher-pbd-entry');" class="flex-1 bg-emerald-600 text-white py-2 rounded-lg text-xs font-bold hover:bg-emerald-700 transition-colors">Isi PBD</button>
+                                <div class="flex gap-3">
+                                    <button onclick="window.TeacherMarkState.classId = '${cls.id}'; window.renderContent('teacher-mark-entry');" class="flex-1 bg-mattary text-white py-2.5 rounded-lg text-sm font-bold hover:bg-mattary-dark shadow-sm transition-all text-center">Isi Markah</button>
+                                    <button onclick="window.TeacherPBDState.classId = '${cls.id}'; window.renderContent('teacher-pbd-entry');" class="flex-1 bg-emerald-600 text-white py-2.5 rounded-lg text-sm font-bold hover:bg-emerald-700 shadow-sm transition-all text-center">Isi PBD</button>
                                 </div>
                             </div>`;
                         }).join('')}
@@ -3019,11 +3267,15 @@
             }
 
             const teacherId = window.AppState.userId;
+            const contextSession = window.DBHelpers.getContextSession();
             const actSession = window.DBHelpers.getActiveSession();
-            if (!actSession) return `<div class="p-8 text-center">Tiada sesi akademik aktif.</div>`;
+            
+            if (!contextSession) return window.renderNoSessionState();
+            
+            const isReadOnly = !actSession || actSession.id !== contextSession.id;
 
-            const assignedClasses = window.DBHelpers.getAssignedClassesForTeacher(teacherId, actSession.id);
-            if (assignedClasses.length === 0) return `<div class="p-8 text-center"><h3 class="text-xl font-bold">Tiada Penugasan Kelas</h3><p class="text-gray-500">Anda belum ditugaskan mengajar mana-mana kelas.</p></div>`;
+            const assignedClasses = window.DBHelpers.getAssignedClassesForTeacher(teacherId, contextSession.id);
+            if (assignedClasses.length === 0) return `<div class="p-8 text-center"><h3 class="text-xl font-bold">Tiada Penugasan Kelas</h3><p class="text-gray-500">Anda belum ditugaskan mengajar mana-mana kelas dalam sesi ini.</p></div>`;
 
             let selectedClassId = window.TeacherMarkState.classId;
             if (!selectedClassId || !assignedClasses.find(c => c.id === selectedClassId)) {
@@ -3032,7 +3284,7 @@
             }
             const classObj = window.DBHelpers.getClass(selectedClassId);
             
-            const assignedSubs = window.DBHelpers.getAssignedSubjectsForClass(teacherId, classObj.id, actSession.id);
+            const assignedSubs = window.DBHelpers.getAssignedSubjectsForClass(teacherId, classObj.id, contextSession.id);
             const selectedSubId = window.TeacherMarkState.subjectId || (assignedSubs[0] ? assignedSubs[0].id : '');
             
             const subObj = (window.LocalDB.subjects || []).find(s => s.id === selectedSubId);
@@ -3082,11 +3334,14 @@
                     <div class="flex flex-col md:flex-row justify-between items-start md:items-center border-b pb-4 gap-4">
                         <div>
                             <h3 class="text-lg font-bold text-gray-900 uppercase">${window.DBHelpers.formatClassName(classObj)} | ${subObj ? subObj.name : 'Pilih Subjek'}</h3>
-                            <p class="text-xs text-gray-500 mt-0.5">Sesi: <span class="font-bold">${actSession.name}</span> | Pentaksiran: <span class="font-bold text-mattary">${examTypeToUse}</span></p>
+                            <p class="text-xs text-gray-500 mt-0.5">Sesi: <span class="font-bold">${contextSession.name}</span> | Pentaksiran: <span class="font-bold text-mattary">${examTypeToUse}</span></p>
                         </div>
-                        <button onclick="window.saveAllTeacherMarks('${classObj.id}', '${selectedSubId}', '${actSession.id}', '${examTypeToUse}', '${collectionName}')" class="bg-mattary hover:bg-mattary-dark text-white font-bold px-6 py-2.5 rounded-xl shadow transition-all text-sm flex items-center gap-2">
-                            <i class="fa-solid fa-floppy-disk"></i> Simpan Markah
-                        </button>
+                        ${isReadOnly ? 
+                            `<div class="bg-red-50 text-red-600 px-4 py-2 rounded-lg text-xs font-bold border border-red-200"><i class="fa-solid fa-lock mr-2"></i>Mod Baca Sahaja (Sesi Arkib)</div>` : 
+                            `<button onclick="window.saveAllTeacherMarks('${classObj.id}', '${selectedSubId}', '${contextSession.id}', '${examTypeToUse}', '${collectionName}')" class="bg-mattary hover:bg-mattary-dark text-white font-bold px-6 py-2.5 rounded-xl shadow transition-all text-sm flex items-center gap-2">
+                                <i class="fa-solid fa-floppy-disk"></i> Simpan Markah
+                            </button>`
+                        }
                     </div>
 
                     <div class="overflow-x-auto border rounded-xl">
@@ -3102,7 +3357,7 @@
                             </thead>
                             <tbody class="divide-y divide-gray-100" id="mark-entry-tbody">
                                 ${students.length === 0 ? `<tr><td colspan="5" class="text-center py-8 text-gray-400">Tiada murid dalam kelas ini.</td></tr>` : students.map((std, idx) => {
-                                    const rec = marksData.find(m => m.myKid === std.myKid && m.subjectId === selectedSubId && m.examType === examTypeToUse && m.sessionId === actSession.id);
+                                    const rec = marksData.find(m => m.myKid === std.myKid && m.subjectId === selectedSubId && m.examType === examTypeToUse && m.sessionId === contextSession.id);
                                     const status = rec ? (rec.status || 'HADIR') : 'HADIR';
                                     const mark = rec && rec.percentage != null ? rec.percentage : '';
                                     const grade = rec ? (rec.grade || '-') : '-';
@@ -3115,14 +3370,14 @@
                                             <p class="font-mono text-[10px] text-gray-500">${std.myKid}</p>
                                         </td>
                                         <td class="px-4 py-3 text-center">
-                                            <select class="mark-status border rounded-lg p-2 text-sm font-bold bg-white text-gray-700 w-24 text-center" onchange="window.updateMarkRowStatus(this)">
+                                            <select class="mark-status border rounded-lg p-2 text-sm font-bold bg-white text-gray-700 w-24 text-center ${isReadOnly ? 'opacity-50 pointer-events-none' : ''}" onchange="window.updateMarkRowStatus(this)" ${isReadOnly ? 'disabled' : ''}>
                                                 <option value="HADIR" ${status === 'HADIR' ? 'selected' : ''}>HADIR</option>
                                                 <option value="TH" ${status === 'TH' ? 'selected' : ''}>TIDAK HADIR (TH)</option>
                                                 <option value="TD" ${status === 'TD' ? 'selected' : ''}>TIDAK DISEMAK (TD)</option>
                                             </select>
                                         </td>
                                         <td class="px-4 py-3 text-center">
-                                            <input type="number" min="0" max="100" value="${mark}" class="mark-input border rounded-lg p-2 text-sm font-bold w-20 text-center ${status !== 'HADIR' ? 'opacity-50 pointer-events-none bg-gray-100' : 'bg-white'}" onkeyup="window.updateMarkRowGrade(this)" onchange="window.updateMarkRowGrade(this)" ${status !== 'HADIR' ? 'readonly' : ''}>
+                                            <input type="number" min="0" max="100" value="${mark}" class="mark-input border rounded-lg p-2 text-sm font-bold w-20 text-center ${status !== 'HADIR' || isReadOnly ? 'opacity-50 pointer-events-none bg-gray-100' : 'bg-white'}" onkeyup="window.updateMarkRowGrade(this)" onchange="window.updateMarkRowGrade(this)" ${status !== 'HADIR' || isReadOnly ? 'readonly' : ''}>
                                         </td>
                                         <td class="px-4 py-3 text-center">
                                             <span class="mark-grade font-black px-3 py-1.5 ${grade !== '-' ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'text-gray-400'} rounded shadow-sm">${grade}</span>
@@ -3181,6 +3436,10 @@
         };
 
         window.saveAllTeacherMarks = async function(classId, subjectId, sessionId, examType, collectionName) {
+            const actSession = window.DBHelpers.getActiveSession();
+            if (!actSession) return window.showToast('Tiada Sesi Akademik aktif. Sila aktifkan sesi terlebih dahulu.', 'error');
+            if (sessionId !== actSession.id) return window.showToast('Ralat: Anda hanya boleh menyimpan markah pada Sesi Aktif.', 'error');
+
             if (!subjectId) return window.showToast('Sila pilih subjek.', 'error');
             
             const rows = document.querySelectorAll('#mark-entry-tbody .mark-row');
@@ -3240,11 +3499,14 @@
             }
 
             const teacherId = window.AppState.userId;
+            const contextSession = window.DBHelpers.getContextSession();
             const actSession = window.DBHelpers.getActiveSession();
-            if (!actSession) return `<div class="p-8 text-center">Tiada sesi akademik aktif.</div>`;
+            
+            if (!contextSession) return window.renderNoSessionState();
+            const isReadOnly = !actSession || actSession.id !== contextSession.id;
 
-            const assignedClasses = window.DBHelpers.getAssignedClassesForTeacher(teacherId, actSession.id);
-            if (assignedClasses.length === 0) return `<div class="p-8 text-center"><h3 class="text-xl font-bold">Tiada Penugasan Kelas</h3><p class="text-gray-500">Anda belum ditugaskan mengajar mana-mana kelas.</p></div>`;
+            const assignedClasses = window.DBHelpers.getAssignedClassesForTeacher(teacherId, contextSession.id);
+            if (assignedClasses.length === 0) return `<div class="p-8 text-center"><h3 class="text-xl font-bold">Tiada Penugasan Kelas</h3><p class="text-gray-500">Anda belum ditugaskan mengajar mana-mana kelas dalam sesi ini.</p></div>`;
 
             let selectedClassId = window.TeacherPBDState.classId;
             if (!selectedClassId || !assignedClasses.find(c => c.id === selectedClassId)) {
@@ -3253,7 +3515,7 @@
             }
             const classObj = window.DBHelpers.getClass(selectedClassId);
             
-            const assignedSubs = window.DBHelpers.getAssignedSubjectsForClass(teacherId, classObj.id, actSession.id);
+            const assignedSubs = window.DBHelpers.getAssignedSubjectsForClass(teacherId, classObj.id, contextSession.id);
             const selectedSubId = window.TeacherPBDState.subjectId || (assignedSubs[0] ? assignedSubs[0].id : '');
             const subObj = (window.LocalDB.subjects || []).find(s => s.id === selectedSubId);
 
@@ -3284,11 +3546,14 @@
                     <div class="flex flex-col md:flex-row justify-between items-start md:items-center border-b pb-4 gap-4">
                         <div>
                             <h3 class="text-lg font-bold text-gray-900 uppercase">${window.DBHelpers.formatClassName(classObj)} | ${subObj ? subObj.name : 'Pilih Subjek'}</h3>
-                            <p class="text-xs text-gray-500 mt-0.5">Sesi: <span class="font-bold">${actSession.name}</span> | Huraian DSKP Aktif</p>
+                            <p class="text-xs text-gray-500 mt-0.5">Sesi: <span class="font-bold">${contextSession.name}</span> | Huraian DSKP Aktif</p>
                         </div>
-                        <button onclick="window.saveAllTeacherPBD('${classObj.id}', '${selectedSubId}', '${actSession.id}')" class="bg-mattary hover:bg-mattary-dark text-white font-bold px-6 py-2.5 rounded-xl shadow transition-all text-sm flex items-center gap-2">
-                            <i class="fa-solid fa-floppy-disk"></i> Simpan Rekod PBD
-                        </button>
+                        ${isReadOnly ? 
+                            `<div class="bg-red-50 text-red-600 px-4 py-2 rounded-lg text-xs font-bold border border-red-200"><i class="fa-solid fa-lock mr-2"></i>Mod Baca Sahaja</div>` : 
+                            `<button onclick="window.saveAllTeacherPBD('${classObj.id}', '${selectedSubId}', '${contextSession.id}')" class="bg-mattary hover:bg-mattary-dark text-white font-bold px-6 py-2.5 rounded-xl shadow transition-all text-sm flex items-center gap-2">
+                                <i class="fa-solid fa-floppy-disk"></i> Simpan Rekod PBD
+                            </button>`
+                        }
                     </div>
 
                     <div class="overflow-x-auto border rounded-xl">
@@ -3303,7 +3568,7 @@
                             </thead>
                             <tbody class="divide-y divide-gray-100" id="pbd-entry-tbody">
                                 ${students.length === 0 ? `<tr><td colspan="4" class="text-center py-8 text-gray-400">Tiada murid dalam kelas ini.</td></tr>` : students.map((std, idx) => {
-                                    const rec = pbdList.find(p => p.myKid === std.myKid && p.subjectId === selectedSubId && p.sessionId === actSession.id);
+                                    const rec = pbdList.find(p => p.myKid === std.myKid && p.subjectId === selectedSubId && p.sessionId === contextSession.id);
                                     const tp = rec ? (rec.tp || '1') : '1';
                                     const desc = window.getTPDescriptor(subType, tp);
 
@@ -3315,7 +3580,7 @@
                                             <p class="font-mono text-[10px] text-gray-500">${std.myKid}</p>
                                         </td>
                                         <td class="px-4 py-3 text-center">
-                                            <select class="pbd-tp border rounded-lg p-2 text-sm font-bold bg-white text-emerald-800 w-28 text-center" onchange="window.updatePBDDescriptor(this, '${subType}')">
+                                            <select class="pbd-tp border rounded-lg p-2 text-sm font-bold bg-white text-emerald-800 w-28 text-center ${isReadOnly ? 'opacity-50 pointer-events-none' : ''}" onchange="window.updatePBDDescriptor(this, '${subType}')" ${isReadOnly ? 'disabled' : ''}>
                                                 <option value="1" ${tp == '1' ? 'selected' : ''}>TP 1</option>
                                                 <option value="2" ${tp == '2' ? 'selected' : ''}>TP 2</option>
                                                 <option value="3" ${tp == '3' ? 'selected' : ''}>TP 3</option>
@@ -3343,6 +3608,10 @@
         };
 
         window.saveAllTeacherPBD = async function(classId, subjectId, sessionId) {
+            const actSession = window.DBHelpers.getActiveSession();
+            if (!actSession) return window.showToast('Tiada Sesi Akademik aktif. Sila aktifkan sesi terlebih dahulu.', 'error');
+            if (sessionId !== actSession.id) return window.showToast('Ralat: Anda hanya boleh menyimpan rekod pada Sesi Aktif.', 'error');
+
             if (!subjectId) return window.showToast('Sila pilih subjek.', 'error');
             
             const rows = document.querySelectorAll('#pbd-entry-tbody .pbd-row');
@@ -3383,8 +3652,18 @@
 
         window.calculateClassRankingData = function(classId, sessionId, examType) {
             const classObj = window.DBHelpers.getClass(classId);
-            const students = (window.LocalDB.students || []).filter(s => s.classId === classId && s.activeStatus !== false)
-                .sort((a,b) => String(a.fullName||'').localeCompare(String(b.fullName||'')));
+            
+            const historicalMyKids = new Set();
+            (window.LocalDB.academicMarks || []).forEach(m => {
+                if (m.sessionId === sessionId && m.classId === classId) historicalMyKids.add(m.myKid);
+            });
+            (window.LocalDB.hafazanMarks || []).forEach(m => {
+                if (m.sessionId === sessionId && m.classId === classId) historicalMyKids.add(m.myKid);
+            });
+            
+            const students = (window.LocalDB.students || []).filter(s => 
+                (s.classId === classId || historicalMyKids.has(s.myKid)) && s.activeStatus !== false
+            ).sort((a,b) => String(a.fullName||'').localeCompare(String(b.fullName||'')));
             
             const isHafazan = ['UPSEH', 'UASEH', 'UPAIM'].includes(examType);
             const subjects = (window.LocalDB.subjects || []).filter(s => s.status !== false && (isHafazan ? s.type === 'HAFAZAN' : s.type === 'AKADEMIK') && window.DBHelpers.isSubjectApplicableToYear(s, classObj ? classObj.yearLevel : 0));
@@ -3493,8 +3772,11 @@
 
         window.renderUI_GuruKelasReport = function() {
             const userId = window.AppState.userId;
-            const formClasses = window.DBHelpers.getFormClassesForTeacher(userId);
-            const actSession = window.DBHelpers.getActiveSession();
+            const contextSession = window.DBHelpers.getContextSession();
+            
+            if (!contextSession) return window.renderNoSessionState();
+            
+            const formClasses = window.DBHelpers.getFormClassesForTeacher(userId, contextSession.id);
 
             if (formClasses.length === 0) {
                 return `<div class="p-8 text-center"><h3 class="text-xl font-bold">Akses Ditolak</h3><p class="text-gray-500">Anda bukan rasmi Guru Kelas bagi mana-mana kelas.</p></div>`;
@@ -3510,7 +3792,7 @@
 
             const isYear6 = Number(selectedClass.yearLevel) === 6;
             const examOptions = isYear6 ? ['UPSA', 'UASA', 'UPSEH', 'UASEH', 'UPAIM'] : ['UPSA', 'UASA', 'UPSEH', 'UASEH'];
-            const reportData = window.calculateClassRankingData(selectedClassId, actSession ? actSession.id : '', selectedExam);
+            const reportData = window.calculateClassRankingData(selectedClassId, contextSession.id, selectedExam);
 
             return `
             <div class="max-w-7xl mx-auto space-y-6 animate-fade-in pb-20">
@@ -3536,7 +3818,7 @@
                         <div>
                             <span class="bg-emerald-100 text-emerald-800 text-xs font-bold px-3 py-1 rounded-full uppercase">LAPORAN PRESTASI KELAS</span>
                             <h1 class="text-2xl font-black text-gray-900 uppercase mt-2">${window.DBHelpers.formatClassName(selectedClass)}</h1>
-                            <p class="text-xs text-gray-500 mt-1">Sesi: <span class="font-bold text-gray-800">${actSession ? actSession.name : '-'}</span> | Pentaksiran: <span class="font-bold text-mattary uppercase">${selectedExam}</span></p>
+                            <p class="text-xs text-gray-500 mt-1">Sesi: <span class="font-bold text-gray-800">${contextSession.name}</span> | Pentaksiran: <span class="font-bold text-mattary uppercase">${selectedExam}</span></p>
                         </div>
                         <div class="text-left md:text-right">
                             <p class="text-xs text-gray-500 uppercase font-bold">Guru Kelas</p>
@@ -3631,7 +3913,11 @@
 
         window.renderUI_GuruKelasIndividual = function() {
             const userId = window.AppState.userId;
-            const formClasses = window.DBHelpers.getFormClassesForTeacher(userId);
+            const contextSession = window.DBHelpers.getContextSession();
+            
+            if (!contextSession) return window.renderNoSessionState();
+
+            const formClasses = window.DBHelpers.getFormClassesForTeacher(userId, contextSession.id);
             if (formClasses.length === 0) {
                 return `<div class="p-8 text-center"><h3 class="text-xl font-bold">Akses Ditolak</h3><p class="text-gray-500">Anda bukan guru kelas.</p></div>`;
             }
@@ -3646,6 +3932,7 @@
             const selectedExam = window.GuruKelasIndividualState.exam || 'UPSA';
             const std = students.find(s => s.myKid === selectedMyKid) || students[0];
             const actSession = window.DBHelpers.getActiveSession();
+            const isReadOnly = !actSession || actSession.id !== contextSession.id;
 
             const isYear6 = Number(classObj.yearLevel) === 6;
             const examOptions = isYear6 ? ['UPSA', 'UASA', 'UPSEH', 'UASEH', 'UPAIM'] : ['UPSA', 'UASA', 'UPSEH', 'UASEH'];
@@ -3657,8 +3944,8 @@
             let countA = 0, countB = 0, countC = 0, countD = 0, countE = 0, countF = 0;
 
             acaSubjects.forEach(sub => {
-                const rec = (window.LocalDB.academicMarks || []).find(m => m.myKid === std.myKid && m.subjectId === sub.id && m.examType === selectedExam && m.sessionId === (actSession ? actSession.id : ''));
-                const pbdRec = (window.LocalDB.pbdRecords || []).find(p => p.myKid === std.myKid && p.subjectId === sub.id && p.sessionId === (actSession ? actSession.id : ''));
+                const rec = (window.LocalDB.academicMarks || []).find(m => m.myKid === std.myKid && m.subjectId === sub.id && m.examType === selectedExam && m.sessionId === contextSession.id);
+                const pbdRec = (window.LocalDB.pbdRecords || []).find(p => p.myKid === std.myKid && p.subjectId === sub.id && p.sessionId === contextSession.id);
                 let pct = null;
                 let grade = '-';
                 if (rec && rec.percentage != null && !isNaN(rec.percentage)) {
@@ -3689,7 +3976,7 @@
             if (isYear6) {
                 const upaimSubjects = (window.LocalDB.subjects || []).filter(s => s.status !== false && s.type === 'UPAIM' && window.DBHelpers.isSubjectApplicableToYear(s, classObj.yearLevel));
                 upaimSubjects.forEach(sub => {
-                    const rec = (window.LocalDB.academicMarks || []).find(m => m.myKid === std.myKid && m.subjectId === sub.id && m.examType === 'UPAIM' && m.sessionId === (actSession ? actSession.id : ''));
+                    const rec = (window.LocalDB.academicMarks || []).find(m => m.myKid === std.myKid && m.subjectId === sub.id && m.examType === 'UPAIM' && m.sessionId === contextSession.id);
                     let pct = null;
                     let grade = '-';
                     if (rec && rec.percentage != null && !isNaN(rec.percentage)) {
@@ -3709,7 +3996,7 @@
                 avgGrade = window.getGradeFromPercentage(avgPct);
             }
 
-            const commentRec = (window.LocalDB.examComments || []).find(c => c.myKid === std.myKid && c.sessionId === (actSession ? actSession.id : '') && c.examType === selectedExam);
+            const commentRec = (window.LocalDB.examComments || []).find(c => c.myKid === std.myKid && c.sessionId === contextSession.id && c.examType === selectedExam);
             const currentComment = commentRec ? commentRec.comment : '';
 
             return `
@@ -3739,7 +4026,7 @@
                         </div>
                         <div class="text-left md:text-right">
                             <p class="text-xs text-gray-500 uppercase font-bold">Kelas: <span class="text-gray-900">${window.DBHelpers.formatClassName(classObj)}</span></p>
-                            <p class="text-xs text-gray-500 uppercase font-bold mt-1">Sesi: <span class="text-gray-900">${actSession ? actSession.name : '-'}</span></p>
+                            <p class="text-xs text-gray-500 uppercase font-bold mt-1">Sesi: <span class="text-gray-900">${contextSession.name}</span></p>
                             <p class="text-xs text-gray-500 uppercase font-bold mt-1">Pentaksiran: <span class="text-mattary">${selectedExam}</span></p>
                         </div>
                     </div>
@@ -3768,11 +4055,11 @@
 
                     <div class="bg-blue-50 border border-blue-200 p-5 rounded-xl no-print mt-4">
                         <h3 class="text-sm font-bold text-blue-900 uppercase tracking-wider mb-2"><i class="fa-solid fa-comment-dots mr-2"></i>Ulasan Guru Kelas</h3>
-                        <textarea id="gk-comment-input" rows="3" class="w-full border border-blue-300 rounded-lg p-3 text-sm font-medium text-gray-800 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none" placeholder="Sila masukkan ulasan atau kata-kata perangsang prestasi murid untuk dicetak ke dalam slip peperiksaan...">${currentComment}</textarea>
+                        <textarea id="gk-comment-input" rows="3" class="w-full border border-blue-300 rounded-lg p-3 text-sm font-medium text-gray-800 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none ${isReadOnly ? 'bg-gray-100 opacity-70 pointer-events-none' : ''}" placeholder="Sila masukkan ulasan atau kata-kata perangsang prestasi murid untuk dicetak ke dalam slip peperiksaan..." ${isReadOnly ? 'readonly' : ''}>${currentComment}</textarea>
                         <div class="mt-3 flex justify-end">
-                            <button onclick="window.saveGuruKelasComment('${std.myKid}', '${classObj.id}', '${actSession ? actSession.id : ''}', '${selectedExam}')" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-6 rounded-lg shadow-md transition-colors flex items-center gap-2">
+                            ${isReadOnly ? '' : `<button onclick="window.saveGuruKelasComment('${std.myKid}', '${classObj.id}', '${contextSession.id}', '${selectedExam}')" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-6 rounded-lg shadow-md transition-colors flex items-center gap-2">
                                 <i class="fa-solid fa-floppy-disk"></i> Simpan Ulasan
-                            </button>
+                            </button>`}
                         </div>
                     </div>
 
@@ -3862,9 +4149,12 @@
             const student = window.AppState.currentUser.student;
             if (!student) return `<div class="p-8 text-center text-red-500 font-bold">Ralat: Data anak tidak ditemui dalam rekod.</div>`;
 
-            const actSession = window.DBHelpers.getActiveSession();
-            const settings = (window.LocalDB.systemSettings || []).find(s => s.id === 'global') || {};
-            const isPublished = settings.publishResults === true;
+            const selectedSessionId = window.AppState.selectedSessionId || (window.DBHelpers.getActiveSession() ? window.DBHelpers.getActiveSession().id : '');
+            const contextSession = window.DBHelpers.getSession(selectedSessionId);
+            
+            if (!contextSession) return window.renderNoSessionState();
+            
+            const isPublished = contextSession && contextSession.isPublished === true;
             
             const classObj = window.DBHelpers.getClass(student.classId);
             const className = classObj ? window.DBHelpers.formatClassName(classObj) : 'Tiada Kelas';
@@ -3890,8 +4180,8 @@
                     let exTypeToCheck = type === 'UPAIM' ? 'UPAIM' : (type === 'HAFAZAN' ? hafExam : selectedExam);
                     let collection = type === 'HAFAZAN' ? 'hafazanMarks' : 'academicMarks';
 
-                    const rec = (window.LocalDB[collection] || []).find(m => m.myKid === student.myKid && m.subjectId === sub.id && m.examType === exTypeToCheck && m.sessionId === (actSession ? actSession.id : ''));
-                    const pbdRec = (window.LocalDB.pbdRecords || []).find(p => p.myKid === student.myKid && p.subjectId === sub.id && p.sessionId === (actSession ? actSession.id : ''));
+                    const rec = (window.LocalDB[collection] || []).find(m => m.myKid === student.myKid && m.subjectId === sub.id && m.examType === exTypeToCheck && m.sessionId === contextSession.id);
+                    const pbdRec = (window.LocalDB.pbdRecords || []).find(p => p.myKid === student.myKid && p.subjectId === sub.id && p.sessionId === contextSession.id);
 
                     let pct = null;
                     let grade = '-';
@@ -3960,6 +4250,9 @@
                                 <p class="text-sm text-gray-500 mt-1">Sila muat turun Slip Rasmi di bawah untuk laporan penuh bersama ulasan Guru Kelas.</p>
                             </div>
                             <div class="flex flex-wrap gap-2 w-full md:w-auto">
+                                <select onchange="window.changeContextSession(this.value);" class="flex-1 md:flex-none border border-gray-200 rounded-xl p-2.5 text-sm font-bold bg-gray-50 uppercase focus:ring-2 focus:ring-mattary outline-none">
+                                    ${(window.LocalDB.sessions || []).sort((a,b)=>b.year-a.year).map(s => `<option value="${s.id}" ${s.id === selectedSessionId ? 'selected' : ''}>${s.name}</option>`).join('')}
+                                </select>
                                 <select onchange="window.GuardianState.exam = this.value; window.renderContent('dashboard');" class="flex-1 md:flex-none border border-gray-200 rounded-xl p-2.5 text-sm font-bold bg-gray-50 uppercase focus:ring-2 focus:ring-mattary outline-none">
                                     ${examOptions.map(ex => `<option value="${ex}" ${ex === selectedExam ? 'selected' : ''}>${ex}</option>`).join('')}
                                 </select>
@@ -4016,7 +4309,7 @@
                     <div class="relative z-10">
                         <span class="bg-white/20 text-white font-bold text-xs px-3 py-1 rounded-full uppercase tracking-wider">PORTAL IBU BAPA & PENJAGA</span>
                         <h1 class="text-3xl font-extrabold mt-3 uppercase tracking-tight">Selamat Datang</h1>
-                        <p class="text-amber-100 text-sm mt-1">Sesi Akademik Semasa: <span class="font-bold">${actSession ? actSession.name : 'Tiada Sesi Aktif'}</span></p>
+                        <p class="text-amber-100 text-sm mt-1">Sesi Akademik Pilihan: <span class="font-bold">${contextSession ? contextSession.name : 'Tiada Sesi'}</span></p>
                     </div>
                 </div>
                 
@@ -4236,7 +4529,7 @@
                                             <div class="grid grid-cols-2 gap-3">
                                                 <label class="block bg-blue-600 text-white rounded-lg p-3 text-center cursor-pointer hover:bg-blue-700 font-bold text-xs shadow-md transition-all">
                                                     <i class="fa-solid fa-cloud-arrow-up mr-1.5"></i> Muat Naik Baru
-                                                    <input type="file" accept="image/png, image/jpeg" class="hidden" onchange="window.handleImageUploadAndCompress(event, 'logo-preview', 'logo-placeholder', 'cfg-logoBase64')">
+                                                    <input type="file" accept="image/png, image/jpeg" class="hidden" onchange="window.handleImageUpload(event, 'logo-preview', 'logo-placeholder', 'cfg-logoBase64')">
                                                 </label>
                                                 <button type="button" onclick="document.getElementById('cfg-logoBase64').value=''; document.getElementById('logo-preview').src=''; document.getElementById('logo-preview').classList.add('hidden'); document.getElementById('logo-placeholder').classList.remove('hidden');" class="bg-red-50 text-red-600 border border-red-200 rounded-lg p-3 text-xs font-bold hover:bg-red-100 transition-colors"><i class="fa-solid fa-trash-can mr-1.5"></i> Padam Logo</button>
                                             </div>
@@ -4279,7 +4572,7 @@
                                                 <div class="grid grid-cols-2 gap-2">
                                                     <label class="block bg-blue-600 text-white rounded-lg px-3 py-2 text-center cursor-pointer hover:bg-blue-700 font-bold text-xs shadow-md transition-all">
                                                         <i class="fa-solid fa-upload mr-1"></i> Upload Imej
-                                                        <input type="file" accept="image/png" class="hidden" onchange="window.handleImageUploadAndCompress(event, 'sig-preview', 'sig-placeholder', 'cfg-gbSignatureBase64')">
+                                                        <input type="file" accept="image/png" class="hidden" onchange="window.handleImageUpload(event, 'sig-preview', 'sig-placeholder', 'cfg-gbSignatureBase64')">
                                                     </label>
                                                     <button type="button" onclick="document.getElementById('cfg-gbSignatureBase64').value=''; document.getElementById('sig-preview').src=''; document.getElementById('sig-preview').classList.add('hidden'); document.getElementById('sig-placeholder').classList.remove('hidden');" class="bg-red-50 text-red-600 border border-red-200 rounded-lg py-2 text-xs font-bold hover:bg-red-100 transition-colors">Padam</button>
                                                 </div>
@@ -4328,19 +4621,6 @@
             const activeBtn = document.getElementById('btn-' + tabId);
             activeBtn.classList.remove('bg-gray-50', 'text-gray-600');
             activeBtn.classList.add('bg-mattary', 'text-white', 'shadow-md');
-        };
-
-        window.switchSlipTab = function(tabId) {
-            document.querySelectorAll('.slip-tab-content').forEach(el => el.classList.add('hidden'));
-            document.getElementById(tabId).classList.remove('hidden');
-            
-            document.querySelectorAll('.slip-tab-btn').forEach(btn => {
-                btn.classList.remove('bg-mattary', 'text-white', 'shadow-sm');
-                btn.classList.add('bg-gray-50', 'text-gray-600');
-            });
-            const activeBtn = document.getElementById('btn-' + tabId);
-            activeBtn.classList.remove('bg-gray-50', 'text-gray-600');
-            activeBtn.classList.add('bg-mattary', 'text-white', 'shadow-sm');
         };
 
         window.handleImageUpload = function(event, previewId, placeholderId, inputId) {
@@ -4463,7 +4743,10 @@
         };
 
         window.renderUI_SlipPeperiksaan = function() {
-            const classes = window.DBHelpers.getSortedClasses(window.LocalDB.classes || []);
+            const contextSession = window.DBHelpers.getContextSession();
+            if (!contextSession) return window.renderNoSessionState();
+            
+            const classes = window.DBHelpers.getSortedClasses((window.LocalDB.classes || []).filter(c => !c.sessionId || c.sessionId === contextSession.id));
             
             return `
             <div class="max-w-4xl mx-auto space-y-6 animate-fade-in pb-20">
@@ -4499,7 +4782,7 @@
                             <i class="fa-solid fa-circle-info mt-0.5"></i>
                             <div>
                                 <p class="font-bold">Maklumat Penjanaan</p>
-                                <p class="mt-1">Slip yang dijana tertakluk pada tetapan <strong>Konfigurasi Format & Logo</strong> dan menggabungkan markah mengikut kelas dan sesi aktif secara automatik.</p>
+                                <p class="mt-1">Slip yang dijana tertakluk pada tetapan <strong>Konfigurasi Format & Logo</strong> dan menggunakan data daripada sesi: <strong class="uppercase">${contextSession.name}</strong>.</p>
                             </div>
                         </div>
 
@@ -4546,8 +4829,8 @@
             window.showToast('Menjana slip rasmi berdasarkan tetapan... Sila tunggu.', 'info');
             
             setTimeout(() => {
-                const sessionObj = window.DBHelpers.getActiveSession();
-                if (!sessionObj) return window.showToast('Tiada sesi akademik aktif.', 'error');
+                const sessionObj = window.DBHelpers.getContextSession();
+                if (!sessionObj) return window.showToast('Tiada Sesi Akademik aktif. Sila aktifkan sesi terlebih dahulu.', 'error');
 
                 const slipSettings = window.getSlipSettings();
                 const rankingData = window.calculateClassRankingData(classObj.id, sessionObj.id, baseExamType);
