@@ -2906,6 +2906,7 @@
             const subjectReports = applicableSubjects.map(sub => {
                 let counts = { A:0, B:0, C:0, D:0, E:0, F:0 };
                 let calonHadir = 0;
+                let calonDaftar = studentsInYear.length;
 
                 studentsInYear.forEach(std => {
                     const markRec = allMarks.find(m => m.myKid === std.myKid && m.subjectId === sub.id && m.examType === selectedExam && m.sessionId === contextSession.id);
